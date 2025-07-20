@@ -1,0 +1,99 @@
+#!/bin/bash
+
+#################################################################################
+#                Copyright (C) 2021 Alexandru Balan				#
+#    This program is free software: you can redistribute it and/or modify it	#
+#  under the terms of the GNU General Public License as published by the	#
+#  Free Software Foundation, either version 3 of the License, or (at your	#
+#  option) any later version.							#
+#    This program is distributed in the hope that it will be useful, but	#
+#  WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY	#
+#  or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License	#
+#  for more details.								#
+#    You should have received a copy of the GNU General Public License along	#
+#  with this program. If not, see http://www.gnu.org/licenses/.			#
+#################################################################################
+    												#The slow brown developer writes over the lazy script
+   log_msg() {                                                                                  #making the function log_msg() to um... log what the user is needed to see
+   echo -e " \e[4;30;43mLOG MESSAGE\e[0;43;30m: $1\e[0m"                                        #displaying on the screen with nice colors and font formating
+}												#ending log_msg() function
+   read -p "Drag and drop/enter path of source ISO here: " SRCISO				#saving path to variable
+   read -p "Drag and drop/enter path of FOLDER you want to have the extracted ISO " EXTDIR	#same :)
+   log_msg "The next operation will be commited: extract $SRCISO in $EXTDIR"			#logging changes. There is no confirmation for this opperation so :)))
+   extract_iso () {										#defining the compile_iso() function
+   sudo touch $EXTDIR/.project-lock.plk								#creating a lockfile(to check is the project is new, or existing)
+   log_msg "Mounting $SRCISO in mnt for extraction"						#log a message
+   sudo mkdir -p /mnt/iso									#making sure there is a folder in mountpoint
+   sudo mount -o loop $SRCISO /mnt/iso								#mounting original ISO
+   log_msg "$SRCISO mounted. Extracting to $EXTDIR"						#log a message that informs the user
+   sudo cp -r /mnt/iso/* $EXTDIR								#extracting iso to $EXTDIR
+   sudo cp -r /mnt/iso/.* $EXTDIR								#extracting hidden files and folders from iso to $EXTDIR
+   log_msg "Image extracted successfully. Unmounting original ISO as it is no longer needed"	#logging success message
+   sudo umount /mnt/iso									#unmounting original iso, as it's no longer needed
+   log_msg "Extracting squashfs from the original ISO"					#logging a message
+   EXTSQUASH="/home/$USER/.local/share/pearcore/custom-system"				#variable EXTSQUASH as path to where extracted squashfs should be
+   mkdir -p $EXTSQUASH									#creating a dir. for extracting the squashfs
+   sudo mkdir -p /mnt/system								#making sure there is a mountpoint there
+   sudo mount -t squashfs $EXTDIR/casper/filesystem.squashfs /mnt/system		#mounting original squashfs to mountpoint so it can be extracted
+   sudo cp -av /mnt/system/. $EXTSQUASH							#copy from original squashfs to folder
+   sudo umount /mnt/system								#unmounting the original squashfs, as it s no longer needed, senpai
+   pearcorechroot									#call the chroot function after image extraction
+}											#ending extract_iso() function
+
+   main () {										#defining main() function
+
+LOCK=$EXTDIR/.project-lock.plk								#LOCK = path to lock file
+if [ -f "$LOCK" ]; then									#if there is a lock file,
+    echo "Project existing. Going chroot"						#return "project existing" and the programm will continue from chroot step, to prevent re-extracting the ISO
+    pearcorechroot									#call chroot function
+else											#if there isn't a lockfile, proceed with extracting tools
+    extract_iso										#call extract_iso() function
+fi
+}											#ending main() function
+
+   pearcorechroot () {									#making a function that lets the user to chroot into custom system to do changes
+   log_msg "Logging in to extracted iso. A chroot environment will be opened for you. All commands and stuff you will do will be applied in the new Distro. For example a 'sudo apt install obs-studio' will install OBS Studio in the OS that you are making."
+   log_msg "giving 5 seconds to read ^^^^^"
+   sleep 5										#terminal will wait few seconds, so the user will have enough time to read :)
+   sudo chroot $EXTSQUASH								#chroot into extracted squashfs
+   echo -e "\e[30;42m User exited chroot environent. Now, commands will run on YOUR installed(host) OS!\e[0m"
+   echo -n "Do you want to compile project into ISO now (y/n)? "			#Asking a question with response(yes or no)
+   old_stty_cfg=$(stty -g)								#ok
+   stty raw -echo ; answer=$(head -c 1) ; stty $old_stty_cfg				#Careful playing with stty
+   if echo "$answer" | grep -iq "^y" ;then						#if answer is "yes",
+    squash_it										#call function squash_it()
+   else											#if answer isn't "yes",
+    exit 2										#exit with exit code 2
+fi
+}											#ending pearcorechroot() function
+
+   squash_it () {									#defining a function that repacks modified files into filesystem.squashfs
+   sudo rm -Rf $EXTDIR/casper/filesystem.squashfs					#remove old squashfs as it's no longer needed in the dev. environment
+   sudo mksquashfs $EXTSQUASH $EXTDIR/casper/filesystem.squashfs			#recompress the extracted filesystem.squashfs
+   make_iso										#calling make_iso() function
+}											#closing squash_it() function
+
+   make_iso () {
+WORKDIR=$EXTDIR                             						#storing the workdir path into a smaller variable uwu
+ISODIR=$WORKDIR/isolinux        							#same, but this time with the ISOLINUX folder uwu
+LIVECDLABEL=$3              								#storing the mount label in variable
+read -p "How would you want to name your ISO file?" CUSTOMISO   			#storing iso name in variable
+    CREATEISO="`which mkisofs`"                                                         #CREATEISO variable will have the value of mkisofs path.
+    if [ "$CREATEISO" = "" ]; then                                                      #If there is no path, means mkisofs is not installed, so
+        CREATEISO="`which genisoimage`"                                                 #the variable will have the value of genisoimage location (usually /usr/bin/genisoimage).
+    fi                                                                                  #Ending the if condition
+    sudo mkisofs -r -V "peariso" -cache-inodes -J -l -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -o $CUSTOMISO $EXTDIR/
+    if [ ! -f $EXTDIR/$CUSTOMISO ]; then                                               	#If there is no ISO in your path,
+        log_msg "Oh no. F*ck, the iso could not be created -_-"                         #I will call the log_msg() to leting the nice user know the fact that the ISO was not created.
+        exit 1                                                                          #exiting with code 1, why not
+    fi                                                                                  #ending if condition
+                                                                                        #yet anothe ryeet
+                                                                                        #also, yet more yeetus
+    log_msg "Making $CUSTOMISO a hybrid iso"                                            #calling the log_msg() function to print the string ( " " ).
+    sudo apt install syslinux-utils -y							#Installing isohybrid to use with iso-senpai.
+    sudo isohybrid --uefi $EXTDIR/$CUSOMISO                                             #Now, let's turn this into an isohybrid for a good reason which I don't really understand :)
+    ISOSIZE="`ls -hs $EXTDIR | awk '{print $1}'`"                                       #storing the size of the ISO in ISOSIZE variable
+    log_msg "$WORKDIR/$CUSTOMISO which is $ISOSIZE in size is succesfully compiled"     #again, calling the log_msg() to show the string
+}											#closing make_iso() function
+main											#Calling the main function
+exit 0                                                                                  #Closing the program with code 0 (normal exit)
